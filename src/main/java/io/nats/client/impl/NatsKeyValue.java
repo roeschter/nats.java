@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.concurrent.LinkedBlockingQueue;
 
 import static io.nats.client.support.NatsConstants.DOT;
+import static io.nats.client.support.NatsConstants.GREATER_THAN;
 import static io.nats.client.support.NatsJetStreamConstants.EXPECTED_LAST_SUB_SEQ_HDR;
 import static io.nats.client.support.NatsJetStreamConstants.JS_WRONG_LAST_SEQUENCE;
 import static io.nats.client.support.NatsKeyValueUtil.*;
@@ -267,12 +268,12 @@ public class NatsKeyValue extends NatsFeatureBase implements KeyValue {
 
     @Override
     public NatsKeyValueWatchSubscription watchAll(KeyValueWatcher watcher, KeyValueWatchOption... watchOptions) throws IOException, JetStreamApiException, InterruptedException {
-        return new NatsKeyValueWatchSubscription(this, Collections.singletonList(">"), watcher, -1, watchOptions);
+        return new NatsKeyValueWatchSubscription(this, Collections.singletonList(GREATER_THAN), watcher, -1, watchOptions);
     }
 
     @Override
     public NatsKeyValueWatchSubscription watchAll(KeyValueWatcher watcher, long fromRevision, KeyValueWatchOption... watchOptions) throws IOException, JetStreamApiException, InterruptedException {
-        return new NatsKeyValueWatchSubscription(this, Collections.singletonList(">"), watcher, fromRevision, watchOptions);
+        return new NatsKeyValueWatchSubscription(this, Collections.singletonList(GREATER_THAN), watcher, fromRevision, watchOptions);
     }
 
     /**
@@ -280,8 +281,26 @@ public class NatsKeyValue extends NatsFeatureBase implements KeyValue {
      */
     @Override
     public List<String> keys() throws IOException, JetStreamApiException, InterruptedException {
+        return _keys(Collections.singletonList(readSubject(GREATER_THAN)));
+    }
+
+    @Override
+    public List<String> keys(String filter) throws IOException, JetStreamApiException, InterruptedException {
+        return _keys(Collections.singletonList(readSubject(filter)));
+    }
+
+    @Override
+    public List<String> keys(List<String> filters) throws IOException, JetStreamApiException, InterruptedException {
+        List<String> readSubjectFilters = new ArrayList<>(filters.size());
+        for (String f : filters) {
+            readSubjectFilters.add(readSubject(f));
+        }
+        return _keys(readSubjectFilters);
+    }
+
+    private List<String> _keys(List<String> readSubjectFilters) throws IOException, JetStreamApiException, InterruptedException {
         List<String> list = new ArrayList<>();
-        visitSubject(readSubject(">"), DeliverPolicy.LastPerSubject, true, false, m -> {
+        visitSubject(readSubjectFilters, DeliverPolicy.LastPerSubject, true, false, m -> {
             KeyValueOperation op = getOperation(m.getHeaders());
             if (op == KeyValueOperation.PUT) {
                 list.add(new BucketAndKey(m).key);
@@ -295,9 +314,27 @@ public class NatsKeyValue extends NatsFeatureBase implements KeyValue {
      */
     @Override
     public LinkedBlockingQueue<KeyResult> consumeKeys() {
+        return _consumeKeys(Collections.singletonList(readSubject(GREATER_THAN)));
+    }
+
+    @Override
+    public LinkedBlockingQueue<KeyResult> consumeKeys(String filter) {
+        return _consumeKeys(Collections.singletonList(readSubject(filter)));
+    }
+
+    @Override
+    public LinkedBlockingQueue<KeyResult> consumeKeys(List<String> filters) {
+        List<String> readSubjectFilters = new ArrayList<>(filters.size());
+        for (String f : filters) {
+            readSubjectFilters.add(readSubject(f));
+        }
+        return _consumeKeys(readSubjectFilters);
+    }
+
+    private LinkedBlockingQueue<KeyResult> _consumeKeys(List<String> readSubjectFilters) {
         LinkedBlockingQueue<KeyResult> q = new LinkedBlockingQueue<>();
         try {
-            visitSubject(readSubject(">"), DeliverPolicy.LastPerSubject, true, false, m -> {
+            visitSubject(readSubjectFilters, DeliverPolicy.LastPerSubject, true, false, m -> {
                 KeyValueOperation op = getOperation(m.getHeaders());
                 if (op == KeyValueOperation.PUT) {
                     q.offer(new KeyResult(new BucketAndKey(m).key));

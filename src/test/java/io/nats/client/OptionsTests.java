@@ -37,7 +37,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
-import static io.nats.client.Options.DEFAULT_MAX_MESSAGES_IN_OUTGOING_QUEUE;
+import static io.nats.client.Options.*;
 import static io.nats.client.support.Encoding.base64UrlEncodeToString;
 import static io.nats.client.support.NatsConstants.DEFAULT_PORT;
 import static org.junit.jupiter.api.Assertions.*;
@@ -93,7 +93,7 @@ public class OptionsTests {
 
         assertEquals(Options.DEFAULT_RECONNECT_WAIT, o.getReconnectWait(), "default reconnect wait");
         assertEquals(Options.DEFAULT_CONNECTION_TIMEOUT, o.getConnectionTimeout(), "default connection timeout");
-        assertEquals(Options.DEFAULT_PING_INTERVAL, o.getPingInterval(), "default ping interval");
+        assertEquals(DEFAULT_PING_INTERVAL, o.getPingInterval(), "default ping interval");
         assertEquals(Options.DEFAULT_REQUEST_CLEANUP_INTERVAL, o.getRequestCleanupInterval(),
             "default cleanup interval");
 
@@ -280,6 +280,56 @@ public class OptionsTests {
     }
 
     @Test
+    public void testDurationProperties() {
+        // test millis
+        Properties props = new Properties();
+        props.setProperty(Options.PROP_RECONNECT_WAIT, "" + (15 * MINUTE));
+        props.setProperty(Options.PROP_RECONNECT_JITTER, "" + (2 * DAY + 3 * HOUR + 4 * MINUTE));
+        props.setProperty(Options.PROP_RECONNECT_JITTER_TLS, "" + DAY);
+        props.setProperty(Options.PROP_CONNECTION_TIMEOUT, "42000");
+        props.setProperty(Options.PROP_SOCKET_WRITE_TIMEOUT, "42123");
+        props.setProperty(Options.PROP_PING_INTERVAL, "20345");
+        props.setProperty(Options.PROP_CLEANUP_INTERVAL, "" + (10 * HOUR));
+        _testDurationProperties(new Options.Builder(props).build());
+
+        // test duration strings
+        props = new Properties();
+        props.setProperty(Options.PROP_RECONNECT_WAIT, "PT15M");
+        props.setProperty(Options.PROP_RECONNECT_JITTER, "P2DT3H4M");
+        props.setProperty(Options.PROP_RECONNECT_JITTER_TLS, "P1D");
+        props.setProperty(Options.PROP_CONNECTION_TIMEOUT, "PT42S");
+        props.setProperty(Options.PROP_SOCKET_WRITE_TIMEOUT, "PT42.123S");
+        props.setProperty(Options.PROP_PING_INTERVAL, "PT20.345S");
+        props.setProperty(Options.PROP_CLEANUP_INTERVAL, "PT10H");
+        _testDurationProperties(new Options.Builder(props).build());
+
+        // test negative value gives default
+        props = new Properties();
+        props.setProperty(Options.PROP_RECONNECT_WAIT, "-1");
+        Options o = new Options.Builder(props).build();
+        assertEquals(2000, o.getReconnectWait().toMillis());
+
+        // test parse error
+        Properties px1 = new Properties();
+        px1.setProperty(Options.PROP_RECONNECT_WAIT, "A");
+        assertThrows(NumberFormatException.class, () -> new Options.Builder(px1).build());
+    }
+
+    private static final long MINUTE = 1000 * 60;
+    private static final long HOUR = MINUTE * 60;
+    private static final long DAY = HOUR * 24;
+
+    private static void _testDurationProperties(Options o) {
+        assertEquals(15 * MINUTE, o.getReconnectWait().toMillis());
+        assertEquals(2 * DAY + 3 * HOUR + 4 * MINUTE, o.getReconnectJitter().toMillis());
+        assertEquals(DAY, o.getReconnectJitterTls().toMillis());
+        assertEquals(42000, o.getConnectionTimeout().toMillis());
+        assertEquals(42123, o.getSocketWriteTimeout().toMillis());
+        assertEquals(20345, o.getPingInterval().toMillis());
+        assertEquals(10 * HOUR, o.getRequestCleanupInterval().toMillis());
+    }
+
+    @Test
     public void testPropertiesBooleanBuilder() {
         Properties props = new Properties();
         props.setProperty(Options.PROP_VERBOSE, "true");
@@ -349,20 +399,18 @@ public class OptionsTests {
         assertNotNull(o.getSslContext(), "property context");
     }
 
-    @SuppressWarnings("deprecation")
     @Test
-    public void testDeprecated() {
-        // supportUTF8Subjects are deprecated and always returns false
+    public void testSupportUTF8Subjects() {
         Options o = new Options.Builder().build();
         assertFalse(o.supportUTF8Subjects());
 
         o = new Options.Builder().supportUTF8Subjects().build();
-        assertFalse(o.supportUTF8Subjects());
+        assertTrue(o.supportUTF8Subjects());
 
         Properties props = new Properties();
         props.setProperty(Options.PROP_UTF8_SUBJECTS, "true");
         o = new Options.Builder(props).build();
-        assertFalse(o.supportUTF8Subjects());
+        assertTrue(o.supportUTF8Subjects());
     }
 
     @Test
@@ -551,7 +599,7 @@ public class OptionsTests {
         assertEquals(Options.DEFAULT_MAX_CONTROL_LINE, o.getMaxControlLine(), "default max control line");
         assertEquals(Options.DEFAULT_RECONNECT_WAIT, o.getReconnectWait(), "default reconnect wait");
         assertEquals(Options.DEFAULT_CONNECTION_TIMEOUT, o.getConnectionTimeout(), "default connection timeout");
-        assertEquals(Options.DEFAULT_PING_INTERVAL, o.getPingInterval(), "default ping interval");
+        assertEquals(DEFAULT_PING_INTERVAL, o.getPingInterval(), "default ping interval");
         assertEquals(Options.DEFAULT_REQUEST_CLEANUP_INTERVAL, o.getRequestCleanupInterval(),
             "default cleanup interval");
         assertEquals(DEFAULT_MAX_MESSAGES_IN_OUTGOING_QUEUE, o.getMaxMessagesInOutgoingQueue(),
@@ -750,6 +798,17 @@ public class OptionsTests {
         dataPort = o.buildDataPort();
         assertNotNull(dataPort);
         assertEquals(SocketDataPortWithWriteTimeout.class.getCanonicalName(), dataPort.getClass().getCanonicalName(), "new default dataPort");
+    }
+
+    @Test
+    public void testTimeoutValidations() {
+        assertThrows(IllegalStateException.class, () -> Options.builder()
+            .socketReadTimeoutMillis((int)DEFAULT_PING_INTERVAL.toMillis())
+            .build());
+
+        assertThrows(IllegalStateException.class, () -> Options.builder()
+            .socketWriteTimeout(DEFAULT_CONNECTION_TIMEOUT)
+            .build());
     }
 
     @Test

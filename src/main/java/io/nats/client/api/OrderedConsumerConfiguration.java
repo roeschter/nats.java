@@ -25,11 +25,10 @@ import static io.nats.client.support.ApiConstants.*;
 import static io.nats.client.support.JsonUtils.beginJson;
 import static io.nats.client.support.JsonUtils.endJson;
 import static io.nats.client.support.JsonValueUtils.*;
+import static io.nats.client.support.NatsConstants.GREATER_THAN;
 import static io.nats.client.support.Validator.emptyAsNull;
 
 public class OrderedConsumerConfiguration implements JsonSerializable {
-
-    public static String DEFAULT_FILTER_SUBJECT = ">";
 
     private final List<String> filterSubjects;
     private DeliverPolicy deliverPolicy;
@@ -46,7 +45,7 @@ public class OrderedConsumerConfiguration implements JsonSerializable {
     public OrderedConsumerConfiguration() {
         startSequence = ConsumerConfiguration.LONG_UNSET;
         filterSubjects = new ArrayList<>();
-        filterSubjects.add(DEFAULT_FILTER_SUBJECT);
+        filterSubjects.add(GREATER_THAN);
     }
 
     public OrderedConsumerConfiguration(String json) throws JsonParseException {
@@ -119,7 +118,7 @@ public class OrderedConsumerConfiguration implements JsonSerializable {
             }
         }
         if (this.filterSubjects.isEmpty()) {
-            this.filterSubjects.add(DEFAULT_FILTER_SUBJECT);
+            this.filterSubjects.add(GREATER_THAN);
         }
         return this;
     }

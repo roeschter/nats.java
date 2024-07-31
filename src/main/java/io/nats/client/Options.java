@@ -34,12 +34,12 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.nats.client.support.Encoding.base64UrlEncodeToString;
-import static io.nats.client.support.Encoding.uriDecode;
+import static io.nats.client.support.Encoding.*;
 import static io.nats.client.support.NatsConstants.*;
 import static io.nats.client.support.SSLUtils.DEFAULT_TLS_ALGORITHM;
 import static io.nats.client.support.Validator.*;
@@ -124,6 +124,11 @@ public class Options {
      * Constant used for calculating if a socket write timeout is large enough.
      */
     public static final long MINIMUM_SOCKET_WRITE_TIMEOUT_GT_CONNECTION_TIMEOUT = 100;
+
+    /**
+     * Constant used for calculating if a socket read timeout is large enough.
+     */
+    public static final long MINIMUM_SOCKET_READ_TIMEOUT_GT_CONNECTION_TIMEOUT = 100;
 
     /**
      * Default server ping interval. The client will send a ping to the server on this interval to insure liveness.
@@ -271,6 +276,11 @@ public class Options {
      * {@link Builder#connectionTimeout(Duration) connectionTimeout}.
      */
     public static final String PROP_CONNECTION_TIMEOUT = PFX + "timeout";
+    /**
+     * Property used to configure a builder from a Properties object. {@value}, see
+     * {@link Builder#socketReadTimeoutMillis(int) socketReadTimeoutMillis}.
+     */
+    public static final String PROP_SOCKET_READ_TIMEOUT_MS = PFX + "socket.read.timeout.ms";
     /**
      * Property used to configure a builder from a Properties object. {@value}, see
      * {@link Builder#socketWriteTimeout(long) socketWriteTimeout}.
@@ -470,9 +480,7 @@ public class Options {
     public static final String PROP_TLS_FIRST = PFX + "tls.first";
     /**
      * This property is used to enable support for UTF8 subjects. See {@link Builder#supportUTF8Subjects() supportUTF8Subjects()}
-     * @deprecated only plain ascii subjects are supported
      */
-    @Deprecated
     public static final String PROP_UTF8_SUBJECTS = "allow.utf8.subjects";
     /**
      * Property used to throw {@link java.util.concurrent.TimeoutException} on timeout instead of {@link java.util.concurrent.CancellationException}.
@@ -593,6 +601,7 @@ public class Options {
     private final Duration reconnectJitter;
     private final Duration reconnectJitterTls;
     private final Duration connectionTimeout;
+    private final int socketReadTimeoutMillis;
     private final Duration socketWriteTimeout;
     private final int socketSoLinger;
     private final Duration pingInterval;
@@ -609,6 +618,7 @@ public class Options {
     private final boolean noHeaders;
     private final boolean noNoResponders;
     private final boolean clientSideLimitChecks;
+    private final boolean supportUTF8Subjects;
     private final int maxMessagesInOutgoingQueue;
     private final boolean discardMessagesWhenOutgoingQueueFull;
     private final boolean ignoreDiscoveredServers;
@@ -705,6 +715,7 @@ public class Options {
         private Duration reconnectJitter = DEFAULT_RECONNECT_JITTER;
         private Duration reconnectJitterTls = DEFAULT_RECONNECT_JITTER_TLS;
         private Duration connectionTimeout = DEFAULT_CONNECTION_TIMEOUT;
+        private int socketReadTimeoutMillis = 0;
         private Duration socketWriteTimeout = DEFAULT_SOCKET_WRITE_TIMEOUT;
         private int socketSoLinger = -1;
         private Duration pingInterval = DEFAULT_PING_INTERVAL;
@@ -722,6 +733,7 @@ public class Options {
         private boolean noHeaders = false;
         private boolean noNoResponders = false;
         private boolean clientSideLimitChecks = true;
+        private boolean supportUTF8Subjects = false;
         private String inboxPrefix = DEFAULT_INBOX_PREFIX;
         private int maxMessagesInOutgoingQueue = DEFAULT_MAX_MESSAGES_IN_OUTGOING_QUEUE;
         private boolean discardMessagesWhenOutgoingQueueFull = DEFAULT_DISCARD_MESSAGES_WHEN_OUTGOING_QUEUE_FULL;
@@ -831,6 +843,7 @@ public class Options {
             booleanProperty(props, PROP_NO_HEADERS, b -> this.noHeaders = b);
             booleanProperty(props, PROP_NO_NORESPONDERS, b -> this.noNoResponders = b);
             booleanProperty(props, PROP_CLIENT_SIDE_LIMIT_CHECKS, b -> this.clientSideLimitChecks = b);
+            booleanProperty(props, PROP_UTF8_SUBJECTS, b -> this.supportUTF8Subjects = b);
             booleanProperty(props, PROP_PEDANTIC, b -> this.pedantic = b);
 
             intProperty(props, PROP_MAX_RECONNECT, DEFAULT_MAX_RECONNECT, i -> this.maxReconnect = i);
@@ -839,6 +852,7 @@ public class Options {
             durationProperty(props, PROP_RECONNECT_JITTER_TLS, DEFAULT_RECONNECT_JITTER_TLS, d -> this.reconnectJitterTls = d);
             longProperty(props, PROP_RECONNECT_BUF_SIZE, DEFAULT_RECONNECT_BUF_SIZE, l -> this.reconnectBufferSize = l);
             durationProperty(props, PROP_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT, d -> this.connectionTimeout = d);
+            intProperty(props, PROP_SOCKET_READ_TIMEOUT_MS, -1, i -> this.socketReadTimeoutMillis = i);
             durationProperty(props, PROP_SOCKET_WRITE_TIMEOUT, DEFAULT_SOCKET_WRITE_TIMEOUT, d -> this.socketWriteTimeout = d);
             intProperty(props, PROP_SOCKET_SO_LINGER, -1, i -> socketSoLinger = i);
 
@@ -988,11 +1002,10 @@ public class Options {
          * performance reasons, the Java client defaults to ASCII. You can enable UTF8
          * with this method. The server, written in go, treats byte to string as UTF8 by default
          * and should allow UTF8 subjects, but make sure to test any clients when using them.
-         * @deprecated Plans are to remove allowing utf8mode
          * @return the Builder for chaining
          */
-        @Deprecated
         public Builder supportUTF8Subjects() {
+            this.supportUTF8Subjects = true;
             return this;
         }
 
@@ -1274,6 +1287,16 @@ public class Options {
         }
 
         /**
+         * Set the timeout to use around socket reads
+         * @param socketReadTimeoutMillis the timeout milliseconds
+         * @return the Builder for chaining
+         */
+        public Builder socketReadTimeoutMillis(int socketReadTimeoutMillis) {
+            this.socketReadTimeoutMillis = socketReadTimeoutMillis;
+            return this;
+        }
+
+        /**
          * Set the timeout to use around socket writes
          * @param socketWriteTimeoutMillis the timeout milliseconds
          * @return the Builder for chaining
@@ -1285,7 +1308,7 @@ public class Options {
 
         /**
          * Set the timeout to use around socket writes
-         * @param socketWriteTimeout the timeout milliseconds
+         * @param socketWriteTimeout the timeout duration
          * @return the Builder for chaining
          */
         public Builder socketWriteTimeout(Duration socketWriteTimeout) {
@@ -1311,7 +1334,7 @@ public class Options {
         /**
          * Set the interval between attempts to pings the server. These pings are automated,
          * and capped by {@link #maxPingsOut(int) maxPingsOut()}. As of 2.4.4 the library
-         * may way up to 2 * time to send a ping. Incoming traffic from the server can postpone
+         * may wait up to 2 * time to send a ping. Incoming traffic from the server can postpone
          * the next ping to avoid pings taking up bandwidth during busy messaging.
          * Keep in mind that a ping requires a round trip to the server. Setting this value to a small
          * number can result in quick failures due to maxPingsOut being reached, these failures will
@@ -1323,7 +1346,7 @@ public class Options {
          * @return the Builder for chaining
          */
         public Builder pingInterval(Duration time) {
-            this.pingInterval = time;
+            this.pingInterval = time == null ? DEFAULT_PING_INTERVAL : time;
             return this;
         }
 
@@ -1567,7 +1590,7 @@ public class Options {
          * @return the Builder for chaining
          */
         public Builder dataPortType(String dataPortClassName) {
-            this.dataPortType = dataPortClassName;
+            this.dataPortType = dataPortClassName == null ? DEFAULT_DATA_PORT_TYPE : dataPortClassName;
             return this;
         }
 
@@ -1626,6 +1649,10 @@ public class Options {
             return this;
         }
 
+        /**
+         * Instruct dispatchers to dispatch all messages as a task, instead of directly from dispatcher thread
+         * @return the Builder for chaining
+         */
         public Builder useDispatcherWithExecutor() {
             this.useDispatcherWithExecutor = true;
             return this;
@@ -1768,6 +1795,15 @@ public class Options {
                     new DefaultThreadFactory(threadPrefix));
             }
 
+            if (socketReadTimeoutMillis > 0) {
+                long srtMin = pingInterval.toMillis() + MINIMUM_SOCKET_WRITE_TIMEOUT_GT_CONNECTION_TIMEOUT;
+                if (socketReadTimeoutMillis < srtMin) {
+                    throw new IllegalStateException("Socket Read Timeout must be at least "
+                        + MINIMUM_SOCKET_READ_TIMEOUT_GT_CONNECTION_TIMEOUT
+                        + " milliseconds greater than the Ping Interval");
+                }
+            }
+
             if (socketWriteTimeout == null || socketWriteTimeout.toMillis() < 1) {
                 socketWriteTimeout = null;
             }
@@ -1829,6 +1865,7 @@ public class Options {
             this.reconnectJitter = o.reconnectJitter;
             this.reconnectJitterTls = o.reconnectJitterTls;
             this.connectionTimeout = o.connectionTimeout;
+            this.socketReadTimeoutMillis = o.socketReadTimeoutMillis;
             this.socketWriteTimeout = o.socketWriteTimeout;
             this.socketSoLinger = o.socketSoLinger;
             this.pingInterval = o.pingInterval;
@@ -1845,6 +1882,7 @@ public class Options {
             this.noHeaders = o.noHeaders;
             this.noNoResponders = o.noNoResponders;
             this.clientSideLimitChecks = o.clientSideLimitChecks;
+            this.supportUTF8Subjects = o.supportUTF8Subjects;
             this.inboxPrefix = o.inboxPrefix;
             this.traceConnection = o.traceConnection;
             this.maxMessagesInOutgoingQueue = o.maxMessagesInOutgoingQueue;
@@ -1891,6 +1929,7 @@ public class Options {
         this.reconnectJitter = b.reconnectJitter;
         this.reconnectJitterTls = b.reconnectJitterTls;
         this.connectionTimeout = b.connectionTimeout;
+        this.socketReadTimeoutMillis = b.socketReadTimeoutMillis;
         this.socketWriteTimeout = b.socketWriteTimeout;
         this.socketSoLinger = b.socketSoLinger;
         this.pingInterval = b.pingInterval;
@@ -1907,6 +1946,7 @@ public class Options {
         this.noHeaders = b.noHeaders;
         this.noNoResponders = b.noNoResponders;
         this.clientSideLimitChecks = b.clientSideLimitChecks;
+        this.supportUTF8Subjects = b.supportUTF8Subjects;
         this.inboxPrefix = b.inboxPrefix;
         this.traceConnection = b.traceConnection;
         this.maxMessagesInOutgoingQueue = b.maxMessagesInOutgoingQueue;
@@ -2121,12 +2161,10 @@ public class Options {
     }
 
     /**
-     * @deprecated Plans are to remove allowing utf8mode
      * @return whether utf8 subjects are supported, see {@link Builder#supportUTF8Subjects() supportUTF8Subjects()} in the builder doc.
      */
-    @Deprecated
     public boolean supportUTF8Subjects() {
-        return false;
+        return supportUTF8Subjects;
     }
 
     /**
@@ -2209,7 +2247,14 @@ public class Options {
     }
 
     /**
-     * @return the socketWriteTimeout, see {@link Builder#socketWriteTimeout(long) socketWriteTimeout()} in the builder doc
+     * @return the socketReadTimeoutMillis, see {@link Builder#socketReadTimeoutMillis(int) socketReadTimeoutMillis} in the builder doc
+     */
+    public int getSocketReadTimeoutMillis() {
+        return socketReadTimeoutMillis;
+    }
+
+    /**
+     * @return the socketWriteTimeout, see {@link Builder#socketWriteTimeout(long) socketWriteTimeout} in the builder doc
      */
     public Duration getSocketWriteTimeout() {
         return socketWriteTimeout;
@@ -2431,9 +2476,9 @@ public class Options {
 
                 String encodedSig = base64UrlEncodeToString(sig);
 
-                appendOption(connectString, Options.OPTION_NKEY, nkey, true, true);
+                appendOption(connectString, Options.OPTION_NKEY, nkey, true);
                 appendOption(connectString, Options.OPTION_SIG, encodedSig, true, true);
-                appendOption(connectString, Options.OPTION_JWT, jwt, true, true);
+                appendOption(connectString, Options.OPTION_JWT, jwt, true);
             }
 
             String uriUser = null;
@@ -2461,24 +2506,24 @@ public class Options {
             }
 
             if (uriUser != null) {
-                appendOption(connectString, Options.OPTION_USER, uriUser, true, true);
+                appendOption(connectString, Options.OPTION_USER, jsonEncode(uriUser), true, true);
             }
             else if (this.username != null) {
-                appendOption(connectString, Options.OPTION_USER, this.username, true, true);
+                appendOption(connectString, Options.OPTION_USER, jsonEncode(this.username), true, true);
             }
 
             if (uriPass != null) {
-                appendOption(connectString, Options.OPTION_PASSWORD, uriPass, true, true);
+                appendOption(connectString, Options.OPTION_PASSWORD, jsonEncode(uriPass), true, true);
             }
             else if (this.password != null) {
-                appendOption(connectString, Options.OPTION_PASSWORD, this.password, true, true);
+                appendOption(connectString, Options.OPTION_PASSWORD, jsonEncode(this.password), true, true);
             }
 
             if (uriToken != null) {
                 appendOption(connectString, Options.OPTION_AUTH_TOKEN, uriToken, true, true);
             }
             else if (this.token != null) {
-                appendOption(connectString, Options.OPTION_AUTH_TOKEN, this.token, true, true);
+                appendOption(connectString, Options.OPTION_AUTH_TOKEN, this.token, true);
             }
         }
 
@@ -2496,10 +2541,11 @@ public class Options {
         _appendOptionEnd(builder, quotes);
     }
 
-    private static void appendOption(CharBuffer builder, String key, char[] value, boolean quotes, boolean comma) {
-        _appendStart(builder, key, quotes, comma);
+    @SuppressWarnings("SameParameterValue")
+    private static void appendOption(CharBuffer builder, String key, char[] value, boolean comma) {
+        _appendStart(builder, key, true, comma);
         builder.put(value);
-        _appendOptionEnd(builder, quotes);
+        _appendOptionEnd(builder, true);
     }
 
     private static void _appendStart(CharBuffer builder, String key, boolean quotes, boolean comma) {
@@ -2599,12 +2645,23 @@ public class Options {
             consumer.accept(defaultValue);
         }
         else {
-            int ms = Integer.parseInt(value);
-            if (ms < 0) {
-                consumer.accept(defaultValue);
+            try {
+                Duration d = Duration.parse(value);
+                if (d.toNanos() < 0) {
+                    consumer.accept(defaultValue);
+                }
+                else {
+                    consumer.accept(d);
+                }
             }
-            else {
-                consumer.accept(Duration.ofMillis(ms));
+            catch (DateTimeParseException pe) {
+                int ms = Integer.parseInt(value);
+                if (ms < 0) {
+                    consumer.accept(defaultValue);
+                }
+                else {
+                    consumer.accept(Duration.ofMillis(ms));
+                }
             }
         }
     }

@@ -16,7 +16,10 @@ package io.nats.client.api;
 import io.nats.client.support.JsonValue;
 
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static io.nats.client.support.ApiConstants.*;
 import static io.nats.client.support.JsonValueUtils.*;
@@ -34,6 +37,7 @@ public class StreamState {
     private final List<Subject> subjects;
     private final List<Long> deletedStreamSequences;
     private final LostStreamData lostStreamData;
+    private final Map<String, Long> subjectMap;
 
     StreamState(JsonValue vStreamState) {
         msgs = readLong(vStreamState, MESSAGES, 0);
@@ -45,9 +49,21 @@ public class StreamState {
         lastTime = readDate(vStreamState, LAST_TS);
         subjectCount = readLong(vStreamState, NUM_SUBJECTS, 0);
         deletedCount = readLong(vStreamState, NUM_DELETED, 0);
-        subjects = Subject.listOf(readValue(vStreamState, SUBJECTS));
         deletedStreamSequences = readLongList(vStreamState, DELETED);
         lostStreamData = LostStreamData.optionalInstance(readValue(vStreamState, LOST));
+
+        subjects = new ArrayList<>();
+        subjectMap = new HashMap<>();
+        JsonValue vSubjects = readValue(vStreamState, SUBJECTS);
+        if (vSubjects != null && vSubjects.map != null) {
+            for (String subject : vSubjects.map.keySet()) {
+                Long count = getLong(vSubjects.map.get(subject));
+                if (count != null) {
+                    subjects.add(new Subject(subject, count));
+                    subjectMap.put(subject, count);
+                }
+            }
+        }
     }
 
     /**
@@ -122,12 +138,20 @@ public class StreamState {
     }
 
     /**
-     * Get a list of the Subject objects. May be null if the Stream Info request did not ask for subjects
-     * or if there are no subjects.
+     * Get a list of the Subject objects. May be empty, for instance
+     * if the Stream Info request did not ask for subjects or if there are no subjects.
      * @return the list of subjects
      */
     public List<Subject> getSubjects() {
         return subjects;
+    }
+
+    /**
+     * Get a map of subjects instead of a list of Subject objects.
+     * @return the map
+     */
+    public Map<String, Long> getSubjectMap() {
+        return subjectMap;
     }
 
     /**
